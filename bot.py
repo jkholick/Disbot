@@ -1,4 +1,6 @@
 import asyncio
+from os.path import isfile
+import pickle
 
 from  decouple import config
 import discord
@@ -9,6 +11,10 @@ from discord.ext import commands
 # Suppress noise about console usage from errors
 yt_dlp.utils.bug_reports_message = lambda: ''
 
+servers={}
+if isfile("./servers.pickle"):
+    with open('servers.pickle', 'rb') as openfile:
+        servers = pickle.load(openfile)
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -60,7 +66,7 @@ class Music(commands.Cog):
 
     @commands.command()
     async def join(self, ctx, *, channel: discord.VoiceChannel):
-        """Joins a voice channel"""
+        """Joins a voice channel (you gotta add the channel id)"""
 
         if ctx.voice_client is not None:
             return await ctx.voice_client.move_to(channel)
@@ -72,7 +78,7 @@ class Music(commands.Cog):
         """Streams from a url or search terms"""
 
         async with ctx.typing():
-            player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
+            player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=False)
             ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
 
         await ctx.send(f'Now playing: {player.title} - {player.artist}')
@@ -101,6 +107,7 @@ class Music(commands.Cog):
 
     @play.before_invoke
     async def ensure_voice(self, ctx):
+        await self.check_music_channel(ctx)
         if ctx.voice_client is None:
             if ctx.author.voice:
                 await ctx.author.voice.channel.connect()
@@ -110,6 +117,49 @@ class Music(commands.Cog):
         elif ctx.voice_client.is_playing():
             ctx.voice_client.stop()
 
+
+    @join.before_invoke
+    @stop.before_invoke
+    @volume.before_invoke
+    async def check_music_channel(self,ctx):
+        global servers
+        
+        if ctx.guild.id in servers:
+            if servers[ctx.guild.id]["music_channel"] != ctx.channel.id:
+                raise commands.CommandError("Message not in music channel")
+
+    def is_guild_owner():
+        def predicate(ctx):
+            return ctx.guild is not None and ctx.guild.owner_id == ctx.author.id
+        return commands.check(predicate)
+    
+    @commands.command()
+    @commands.check_any(commands.is_owner(), is_guild_owner())
+    async def set_music_channel(self,ctx,channel = "None"):
+        """Set a specific channel for music commands(server owner only)
+            Usage: set_music_channel #channel_name (channel name optional)
+        """
+
+        global servers
+        
+        if channel == "None":
+            if ctx.guild in servers:
+                servers[ctx.guild.id]["music_channel_bot"] = ctx.channel.id
+            else:
+                servers[ctx.guild.id] = {"music_channel": ctx.channel.id}
+            
+            await ctx.send("Setting current channel <#"+ str(ctx.channel.id) +"> as music channel")
+        else:
+            if ctx.guild in servers:
+                servers[ctx.guild.id]["music_channel_bot"] = int(channel[2:-1])
+            else:
+                servers[ctx.guild.id] = {"music_channel": int(channel[2:-1])}
+            
+            await ctx.send("Set "+ channel +" as music channel")
+        
+        with open("servers.pickle", "wb") as outfile:
+            pickle.dump(servers, outfile)
+            
 
 intents = discord.Intents.default()
 intents.message_content = True
